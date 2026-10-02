@@ -98,16 +98,19 @@ class HorizonBot(discord.Client):
             f"Source: {item['url']}"
         )
         if isinstance(channel, discord.ForumChannel):
-            thread, _ = await channel.create_thread(
-                name=item["title"][:100], content=content
-            )
             tags = [
                 tag
                 for tag in channel.available_tags
-                if tag.name.casefold() in {item["status"].casefold(), item["priority"].casefold()}
+                if tag.name.casefold()
+                in {item["status"].casefold(), item["priority"].casefold()}
             ]
-            if tags:
-                await thread.edit(applied_tags=tags)
+            if not tags:
+                raise RuntimeError(
+                    "No matching Discord forum tags found for GitHub item"
+                )
+            thread, _ = await channel.create_thread(
+                name=item["title"][:100], content=content, applied_tags=tags
+            )
         elif isinstance(channel, discord.TextChannel):
             await channel.send(content)
         else:
