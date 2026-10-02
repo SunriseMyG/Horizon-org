@@ -1,7 +1,12 @@
 import unittest
 from types import SimpleNamespace
 
-from bot_horizon.sync import discord_message_body, github_item_key, is_bot_message
+from bot_horizon.sync import (
+    discord_message_body,
+    discord_thread_id,
+    github_item_key,
+    is_bot_message,
+)
 
 
 class SyncTests(unittest.TestCase):
@@ -27,6 +32,19 @@ class SyncTests(unittest.TestCase):
         self.assertIn("Priority: Low", body)
         self.assertIn("Description:\nFix login", body)
         self.assertIn(message.jump_url, body)
+
+    def test_thread_id_from_message_jump_url(self) -> None:
+        url = "https://discord.com/channels/111/222/333"
+        self.assertEqual(discord_thread_id(url), 222)
+
+    def test_thread_id_from_thread_jump_url(self) -> None:
+        self.assertEqual(discord_thread_id("https://discord.com/channels/111/222"), 222)
+
+    def test_thread_id_rejects_unrelated_urls(self) -> None:
+        self.assertIsNone(discord_thread_id(None))
+        self.assertIsNone(discord_thread_id(""))
+        self.assertIsNone(discord_thread_id("https://github.com/org/repo/issues/1"))
+        self.assertIsNone(discord_thread_id("https://discord.com/channels/111/abc"))
 
 
 if __name__ == "__main__":

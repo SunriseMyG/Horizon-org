@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.parse import urlparse
 import re
 
 
@@ -65,6 +66,19 @@ def github_item_source_url(item: dict[str, Any]) -> str | None:
     body = (item.get("content") or {}).get("body") or ""
     match = re.search(r"^Source:\s*(\S+)", body, re.MULTILINE)
     return match.group(1) if match else None
+
+
+def discord_thread_id(source_url: str | None) -> int | None:
+    """Extract the Discord thread id from a thread or message jump url."""
+    if not source_url:
+        return None
+    parts = urlparse(source_url).path.strip("/").split("/")
+    if len(parts) < 3 or parts[0] != "channels":
+        return None
+    try:
+        return int(parts[2])
+    except ValueError:
+        return None
 
 
 def github_item_data(

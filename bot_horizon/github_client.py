@@ -1,7 +1,12 @@
-import asyncio
+import logging
 from typing import Any
 
 import httpx
+
+from .sync import github_item_key
+
+
+logger = logging.getLogger(__name__)
 
 
 class GitHubClient:
@@ -84,15 +89,10 @@ class GitHubClient:
         title: str,
         status: str,
         priority: str,
+        previous_title: str | None = None,
     ) -> None:
-        items = await self.list_items()
-        linked_item = next(
-            (
-                item
-                for item in items
-                if source_url in ((item.get("content") or {}).get("body") or "")
-            ),
-            None,
+        linked_item = await self.find_linked_item(
+            source_url, title=previous_title or title
         )
         if not linked_item:
             raise RuntimeError(f"No GitHub issue linked to Discord thread: {source_url}")
@@ -359,6 +359,120 @@ class GitHubClient:
             },
         )
 
+    async def find_linked_item(
+        self,
+        source_url: str,
+        item_key: str | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the Project item matching this Discord thread.
+
+        The source line of the task body is the reliable link. The item key and
+        the post name are fallbacks for a task that is not linked yet; a title is
+        only trusted when it identifies a single task.
+        """
+        items = await self.list_items()
+        linked_item = next(
+            (
+                item
+                for item in items
+                if source_url in ((item.get("content") or {}).get("body") or "")
+            ),
+            None,
+        )
+        if linked_item is None and item_key:
+            linked_item = next(
+                (item for item in items if github_item_key(item) == item_key), None
+            )
+        if linked_item is None and title:
+            matches = [
+                item
+                for item in items
+                if ((item.get("content") or {}).get("title") or "")[:100].casefold()
+                == title[:100].casefold()
+            ]
+            if len(matches) == 1:
+                linked_item = matches[0]
+        return linked_item
+
+    async def set_discord_source(self, item: dict[str, Any], source_url: str) -> None:
+        """Write the Discord thread url in the task body so the link survives restarts."""
+        content = item.get("content") or {}
+        body = content.get("body") or ""
+        if source_url in body:
+            return
+        body = f"{body.rstrip()}\n\nSource: {source_url}".lstrip()
+        content_id = content.get("id")
+        if not content_id:
+            raise RuntimeError("The GitHub task has no node id to write the source into")
+        if content.get("url"):
+            query = """
+            mutation($issueId: ID!, $body: String!) {
+              updateIssue(input: {id: $issueId, body: $body}) { issue { id } }
+            }
+            """
+            await self._query(query, {"issueId": content_id, "body": body})
+        else:
+            query = """
+            mutation($draftIssueId: ID!, $body: String!) {
+              updateProjectV2DraftIssue(input: {
+                draftIssueId: $draftIssueId,
+                body: $body
+              }) { draftIssue { id } }
+            }
+            """
+            await self._query(query, {"draftIssueId": content_id, "body": body})
+
+    async def delete_task_from_discord(
+        self,
+        source_url: str,
+        item_key: str | None = None,
+        title: str | None = None,
+    ) -> str | None:
+        """Delete the task linked to a Discord thread, returning its item key."""
+        linked_item = await self.find_linked_item(source_url, item_key, title)
+        if not linked_item:
+            return None
+        key = github_item_key(linked_item)
+        content = linked_item.get("content") or {}
+        # Only issues and pull requests carry a url; a draft item has none.
+        issue_id = content["id"] if content.get("url") else None
+        if issue_id:
+            try:
+                await self.delete_issue(issue_id)
+            except Exception:
+                logger.warning(
+                    "Could not delete issue %s, removing it from the Project instead",
+                    issue_id,
+                    exc_info=True,
+                )
+                await self.delete_project_item(linked_item["id"])
+        else:
+            await self.delete_project_item(linked_item["id"])
+        return key
+
+    async def delete_issue(self, issue_id: str) -> None:
+        query = """
+        mutation($issueId: ID!) {
+          deleteIssue(input: {issueId: $issueId}) {
+            repository { id }
+          }
+        }
+        """
+        await self._query(query, {"issueId": issue_id})
+
+    async def delete_project_item(self, item_id: str) -> None:
+        query = """
+        mutation($projectId: ID!, $itemId: ID!) {
+          deleteProjectV2Item(input: {projectId: $projectId, itemId: $itemId}) {
+            deletedItemId
+          }
+        }
+        """
+        await self._query(
+            query, {"projectId": self.project_id, "itemId": item_id}
+        )
+
     async def project_metadata(self) -> list[dict[str, Any]]:
         query = """
         query($projectId: ID!) {
@@ -388,7 +502,7 @@ class GitHubClient:
                 nodes {
                   id
                   content {
-                    ... on DraftIssue { title body createdAt }
+                    ... on DraftIssue { id title body createdAt }
                     ... on Issue {
                           id databaseId number title body url createdAt
                       labels(first: 20) { nodes { id name } }
