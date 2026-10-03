@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 
-from .sync import github_item_key
+from .sync import github_item_key, parse_assignees
 
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class GitHubClient:
       body: str,
       status: str = "Backlog",
       priority: str = "Low",
-      assignee: str = "",
+      assignees: list[str] | str = "",
     ) -> str:
         query = """
         mutation($repositoryId: ID!, $title: String!, $body: String!) {
@@ -76,8 +76,17 @@ class GitHubClient:
         issue = data["createIssue"]["issue"]
         if priority:
             await self.add_label(issue["id"], priority)
-        if assignee:
-            await self.assign_issue(issue["id"], assignee)
+        if assignees:
+            # Never let an assignee problem leave the issue out of the Project.
+            try:
+                await self.assign_issue(issue["id"], assignees)
+            except Exception:
+                logger.warning(
+                    "Could not assign %s on issue %s",
+                    assignees,
+                    issue["url"],
+                    exc_info=True,
+                )
         item_id = await self.add_issue_to_project(issue["id"])
         await self.update_project_status(item_id, status)
         await self.update_native_priority(issue["id"], priority)
@@ -90,7 +99,8 @@ class GitHubClient:
         status: str,
         priority: str,
         previous_title: str | None = None,
-    ) -> None:
+    ) -> str | None:
+        """Push a Discord change to GitHub, returning the key of the item hit."""
         linked_item = await self.find_linked_item(
             source_url, title=previous_title or title
         )
@@ -127,6 +137,7 @@ class GitHubClient:
         await self.add_label(issue["id"], priority)
         await self.update_project_status(linked_item["id"], status)
         await self.update_native_priority(issue["id"], priority)
+        return github_item_key(linked_item)
 
     async def update_native_priority(self, issue_id: str, priority: str) -> None:
         fields_query = """
@@ -180,7 +191,12 @@ class GitHubClient:
         )
 
     async def create_project_item(
-        self, title: str, body: str, status: str, priority: str, assignee: str
+        self,
+        title: str,
+        body: str,
+        status: str,
+        priority: str,
+        assignees: list[str] | str = "",
     ) -> str:
         query = """
         mutation($projectId: ID!, $title: String!, $body: String!) {
@@ -200,8 +216,12 @@ class GitHubClient:
         item_id = data["addProjectV2DraftIssue"]["projectItem"]["id"]
         await self.update_project_select(item_id, "Status", status)
         await self.update_project_select(item_id, self.priority_field_name, priority)
-        if assignee:
-            await self.update_project_text(item_id, self.assignee_field_name, assignee)
+        if isinstance(assignees, str):
+            assignees = parse_assignees(assignees)
+        if assignees:
+            await self.update_project_text(
+                item_id, self.assignee_field_name, ", ".join(assignees)
+            )
         return item_id
 
     async def add_issue_to_project(self, issue_id: str) -> str:
@@ -268,7 +288,28 @@ class GitHubClient:
         """
         await self._query(mutation, {"issueId": issue_id, "labelIds": [label["id"]]})
 
-    async def assign_issue(self, issue_id: str, login: str) -> None:
+    async def assign_issue(self, issue_id: str, logins: list[str] | str) -> None:
+        """Assign every known login, warning about the ones GitHub does not know."""
+        if isinstance(logins, str):
+            logins = parse_assignees(logins)
+        user_query = """
+        query($login: String!) { user(login: $login) { id } }
+        """
+        user_ids = []
+        for login in logins:
+            try:
+                user = await self._query(user_query, {"login": login})
+                user_id = (user.get("user") or {}).get("id")
+            except Exception:
+                user_id = None
+            if user_id:
+                user_ids.append(user_id)
+            else:
+                logger.warning(
+                    "No GitHub user named %r, that assignee is skipped", login
+                )
+        if not user_ids:
+            return
         query = """
         mutation($issueId: ID!, $assigneeIds: [ID!]!) {
           addAssigneesToAssignable(input: {assignableId: $issueId, assigneeIds: $assigneeIds}) {
@@ -279,12 +320,7 @@ class GitHubClient:
           }
         }
         """
-        user_query = """
-        query($login: String!) { user(login: $login) { id } }
-        """
-        user = await self._query(user_query, {"login": login})
-        user_id = user["user"]["id"]
-        await self._query(query, {"issueId": issue_id, "assigneeIds": [user_id]})
+        await self._query(query, {"issueId": issue_id, "assigneeIds": user_ids})
 
     async def update_project_status(self, item_id: str, status: str) -> None:
         await self.update_project_select(item_id, "Status", status)

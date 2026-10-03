@@ -8,6 +8,8 @@ class Settings:
     discord_channel_id: int
     github_token: str
     github_project_id: str
+    discord_notification_channel_id: int = 0
+    notification_language: str = "en"
     github_repository_id: str = ""
     github_org_name: str = "play-horizon"
     github_project_number: int = 5
@@ -32,6 +34,10 @@ class Settings:
             discord_channel_id=int(required["DISCORD_CHANNEL_ID"]),
             github_token=required["GITHUB_TOKEN"],
             github_project_id=required["GITHUB_PROJECT_ID"],
+            discord_notification_channel_id=int(
+                os.getenv("DISCORD_NOTIFICATION_CHANNEL_ID") or 0
+            ),
+            notification_language=os.getenv("NOTIFICATION_LANGUAGE", "en"),
             github_repository_id=os.getenv("GITHUB_REPOSITORY_ID", ""),
             github_org_name=os.getenv("GITHUB_ORG_NAME", "play-horizon"),
             github_project_number=int(os.getenv("GITHUB_PROJECT_NUMBER", "5")),

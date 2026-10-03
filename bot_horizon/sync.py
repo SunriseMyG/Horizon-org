@@ -26,6 +26,24 @@ def discord_message_body(message: Any) -> str:
     )
 
 
+def parse_assignees(text: str) -> list[str]:
+    """Split an `Assigned to` value into GitHub logins.
+
+    Logins may be separated by a comma, a semicolon, a slash or spaces, and an
+    optional `@` prefix is accepted. Duplicates and `Unassigned` are dropped.
+    """
+    logins: list[str] = []
+    seen: set[str] = set()
+    for raw in re.split(r"[,;/]|\s+", text or ""):
+        login = raw.strip().lstrip("@").strip()
+        if not login or login.casefold() == "unassigned":
+            continue
+        if login.casefold() not in seen:
+            seen.add(login.casefold())
+            logins.append(login)
+    return logins
+
+
 def discord_task_data(message: Any, channel_override: Any = None) -> dict[str, str]:
     content = message.content.strip()
     channel = channel_override or getattr(message, "channel", None)
@@ -44,15 +62,14 @@ def discord_task_data(message: Any, channel_override: Any = None) -> dict[str, s
         r"^\s*Description\s*:\s*(.*)$", content, re.MULTILINE | re.IGNORECASE | re.DOTALL
     )
     description = description_match.group(1).strip() if description_match else content
-    assignee = assignee_match.group(1).strip() if assignee_match else ""
-    if assignee.casefold() == "unassigned":
-        assignee = ""
+    assignees = parse_assignees(assignee_match.group(1) if assignee_match else "")
     title = getattr(channel, "name", "") or content.splitlines()[0][:120]
     return {
         "title": title[:120],
         "status": status,
         "priority": priority,
-        "assignee": assignee,
+        "assignees": assignees,
+        "assignee": ", ".join(assignees),
         "description": description,
     }
 
@@ -115,24 +132,43 @@ def github_item_data(
             PRIORITY_NAMES[0],
         ),
     )
-    assignees = content.get("assignees", {}).get("nodes", [])
-    assignee = assignees[0].get("login", "") if assignees else next(
-        (
-            field.get("text", "")
-            for field in field_values
-            if field.get("field", {}).get("name") in {assignee_field_name, "Assigned to"}
-        ),
-        "",
-    )
+    logins = [
+        login
+        for node in content.get("assignees", {}).get("nodes", [])
+        if (login := node.get("login"))
+    ]
+    if not logins:
+        logins = parse_assignees(
+            next(
+                (
+                    field.get("text", "")
+                    for field in field_values
+                    if field.get("field", {}).get("name")
+                    in {assignee_field_name, "Assigned to"}
+                ),
+                "",
+            )
+        )
     description = content.get("body") or ""
     return {
         "title": content.get("title", "Nouvelle tache"),
         "url": content.get("url", ""),
         "status": status,
         "priority": priority,
-        "assignee": assignee,
+        "assignees": logins,
+        "assignee": ", ".join(logins),
         "description": description,
     }
+
+
+def task_state(task: dict[str, Any]) -> tuple[str, ...]:
+    """The tracked fields of a task, to compare two versions of it."""
+    return (
+        task["title"],
+        task["status"],
+        task["priority"],
+        task["assignee"],
+    )
 
 
 def is_bot_message(message: Any) -> bool:
