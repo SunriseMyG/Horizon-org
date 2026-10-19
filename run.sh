@@ -9,6 +9,7 @@ REQUIREMENTS="requirements.txt"
 LOCK="$VENV/.requirements.lock"
 REQUIRED_KEYS="DISCORD_TOKEN DISCORD_CHANNEL_ID GITHUB_TOKEN GITHUB_PROJECT_ID"
 install=1
+env_file=".env"
 
 usage() {
   cat <<'USAGE'
@@ -18,6 +19,8 @@ Creates .venv if needed, installs requirements.txt and starts the bot.
 
 Options:
   -n, --no-install   Skip the dependency step and start the bot right away.
+  -d, --dev          Read .env.dev instead of .env, to test on a personal
+                     Discord and GitHub.
   -h, --help         Show this message.
 USAGE
 }
@@ -25,6 +28,7 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     -n|--no-install) install=0 ;;
+    -d|--dev) env_file=".env.dev" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
   esac
@@ -82,23 +86,23 @@ env_value() { # file key
   sed -n "s/^[[:space:]]*$2[[:space:]]*=//p" "$1" | head -1 | tr -d '\r'
 }
 
-if [ ! -f .env ]; then
-  cp .env.example .env
-  fail ".env was missing, it has been created from .env.example. Fill it in and run this script again."
+if [ ! -f "$env_file" ]; then
+  cp .env.example "$env_file"
+  fail "$env_file was missing, it has been created from .env.example. Fill it in and run this script again."
 fi
 
 missing=""
 for key in $REQUIRED_KEYS; do
-  value="$(env_value .env "$key")"
+  value="$(env_value "$env_file" "$key")"
   example="$(env_value .env.example "$key")"
   if [ -z "$value" ] || { [ -n "$example" ] && [ "$value" = "$example" ]; }; then
     missing="$missing $key"
   fi
 done
 if [ -n "$missing" ]; then
-  fail "these .env variables still hold their placeholder value:$missing"
+  fail "these $env_file variables still hold their placeholder value:$missing"
 fi
 
 # --- run ---------------------------------------------------------------
-echo "==> Starting the bot (Ctrl+C to stop)"
-exec "$py" -m bot_horizon.main
+echo "==> Starting the bot with $env_file (Ctrl+C to stop)"
+HORIZON_ENV_FILE="$env_file" exec "$py" -m bot_horizon.main

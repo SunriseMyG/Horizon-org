@@ -2,7 +2,9 @@
 [CmdletBinding()]
 param(
     # Skip the dependency step and start the bot right away.
-    [switch] $NoInstall
+    [switch] $NoInstall,
+    # Read .env.dev instead of .env, to test on a personal Discord and GitHub.
+    [switch] $Dev
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,6 +13,7 @@ Set-Location -Path $PSScriptRoot
 $venv = '.venv'
 $requirements = 'requirements.txt'
 $lock = Join-Path $venv '.requirements.lock'
+$envFile = if ($Dev) { '.env.dev' } else { '.env' }
 $requiredKeys = @('DISCORD_TOKEN', 'DISCORD_CHANNEL_ID', 'GITHUB_TOKEN', 'GITHUB_PROJECT_ID')
 
 function Fail($message) {
@@ -73,21 +76,22 @@ if (-not $NoInstall) {
 }
 
 # --- configuration -----------------------------------------------------
-if (-not (Test-Path '.env')) {
-    Copy-Item '.env.example' '.env'
-    Fail '.env was missing, it has been created from .env.example. Fill it in and run this script again.'
+if (-not (Test-Path $envFile)) {
+    Copy-Item '.env.example' $envFile
+    Fail "$envFile was missing, it has been created from .env.example. Fill it in and run this script again."
 }
 
 $missing = $requiredKeys | Where-Object {
-    $value = Get-EnvValue '.env' $_
+    $value = Get-EnvValue $envFile $_
     $example = Get-EnvValue '.env.example' $_
     (-not $value) -or ($example -and $value -eq $example)
 }
 if ($missing) {
-    Fail "these .env variables still hold their placeholder value: $($missing -join ', ')"
+    Fail "these $envFile variables still hold their placeholder value: $($missing -join ', ')"
 }
 
 # --- run ---------------------------------------------------------------
-Write-Host '==> Starting the bot (Ctrl+C to stop)' -ForegroundColor Cyan
+$env:HORIZON_ENV_FILE = $envFile
+Write-Host "==> Starting the bot with $envFile (Ctrl+C to stop)" -ForegroundColor Cyan
 & $py -m bot_horizon.main
 exit $LASTEXITCODE

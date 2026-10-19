@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Horizon bot (dev)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "bot_horizon.main",
+      "cwd": "${workspaceFolder}",
+      "env": { "HORIZON_ENV_FILE": ".env.dev" }
+    },
+    {
+      "name": "Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "unittest",
+      "args": ["tests.test_sync", "tests.test_notifications", "tests.test_github_client", "tests.test_form", "tests.test_bot"],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

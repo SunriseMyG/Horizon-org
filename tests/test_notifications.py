@@ -3,7 +3,12 @@ from types import SimpleNamespace
 
 from bot_horizon.notifications import (
     ACTION_COLORS,
+    COMMENTED,
     CREATED,
+    EXCERPT_LIMIT,
+    POST_LIMIT,
+    discord_date,
+    post_card,
     DELETED,
     DISCORD_TO_GITHUB,
     GITHUB_TO_DISCORD,
@@ -58,7 +63,7 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(card.color, ACTION_COLORS[CREATED])
 
     def test_each_action_has_its_own_colour(self) -> None:
-        self.assertEqual(len(set(ACTION_COLORS.values())), 3)
+        self.assertEqual(len(set(ACTION_COLORS.values())), len(ACTION_COLORS))
 
     def test_creation_card_lists_the_task_fields(self) -> None:
         card = self.creation()
@@ -80,7 +85,17 @@ class NotificationTests(unittest.TestCase):
         details = task_details(
             {"title": "T", "status": "Backlog", "priority": "Low", "assignee": ""}
         )
-        self.assertEqual(details, {"status": "Backlog", "priority": "Low", "assignee": ""})
+        self.assertEqual(
+            details,
+            {
+                "status": "Backlog",
+                "priority": "Low",
+                "assignee": "",
+                "size": "",
+                "start_date": "",
+                "target_date": "",
+            },
+        )
 
     def test_an_empty_assignee_reads_as_unassigned(self) -> None:
         card = build_notification(
@@ -180,6 +195,43 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("https://github.com/org/repo/issues/1", text)
 
 
+class MessageCardTests(unittest.TestCase):
+    def card(self, text: str, language: str = "en") -> object:
+        return build_notification(
+            COMMENTED,
+            GITHUB_TO_DISCORD,
+            "Fix login",
+            message=("bob", text),
+            links={"GitHub": "https://github.com/org/repo/issues/1#c1"},
+            language=language,
+        )
+
+    def test_a_message_card_names_the_author_and_quotes_the_message(self) -> None:
+        card = self.card("Looks good to me")
+        self.assertIn("New message", card.author)
+        self.assertIn("Fix login", card.title)
+        self.assertEqual(card.color, ACTION_COLORS[COMMENTED])
+        self.assertEqual(field_of(card, "Author")[1], "bob")
+        self.assertEqual(field_of(card, "Message")[1], "Looks good to me")
+
+    def test_a_long_message_is_quoted_up_to_the_excerpt_limit(self) -> None:
+        quoted = field_of(self.card("x" * 2000), "Message")[1]
+        self.assertEqual(len(quoted), EXCERPT_LIMIT)
+        self.assertTrue(quoted.endswith("\N{HORIZONTAL ELLIPSIS}"))
+
+    def test_an_empty_message_has_no_quote(self) -> None:
+        card = self.card("   ")
+        self.assertFalse(any("Message" in name for name, _, _ in card.fields))
+
+    def test_every_language_names_a_message_card(self) -> None:
+        for code, words in LANGUAGES.items():
+            with self.subTest(language=code):
+                card = self.card("hi", code)
+                self.assertIn(words["commented"], card.author)
+                self.assertEqual(field_of(card, words["author"])[1], "bob")
+                self.assertEqual(field_of(card, words["message"])[1], "hi")
+
+
 class LanguageTests(unittest.TestCase):
     def test_ten_languages_share_the_same_keys(self) -> None:
         self.assertEqual(len(LANGUAGES), 10)
@@ -228,6 +280,74 @@ class LanguageTests(unittest.TestCase):
         marked = [line for line in listing.splitlines() if line.startswith("**>**")]
         self.assertEqual(len(marked), 1)
         self.assertIn("`ru`", marked[0])
+
+
+class DateCardTests(unittest.TestCase):
+    def test_a_date_reads_as_a_discord_timestamp(self) -> None:
+        # Noon UTC on 31 October 2026.
+        self.assertEqual(discord_date("2026-10-31"), "<t:1793448000:D>")
+        self.assertEqual(discord_date(""), "")
+
+    def test_a_date_change_shows_both_dates(self) -> None:
+        card = build_notification(
+            UPDATED,
+            GITHUB_TO_DISCORD,
+            "Fix login",
+            changes=[("target_date", "", "2026-10-31")],
+        )
+        changes = field_of(card, "Changes")[1]
+        self.assertIn("Target date", changes)
+        self.assertIn("None", changes)
+        self.assertIn("<t:1793448000:D>", changes)
+
+
+class PostCardTests(unittest.TestCase):
+    def details(self, **changes) -> dict:
+        return {
+            "status": "Ready",
+            "priority": "High",
+            "size": "M",
+            "assignee": "alice",
+            "start_date": "",
+            "target_date": "2026-10-31",
+            "description": "Fix the login page",
+            "url": "https://github.com/org/repo/issues/1",
+            **changes,
+        }
+
+    def test_the_card_lists_the_task_one_field_a_line(self) -> None:
+        card = post_card(self.details())
+        self.assertEqual(
+            card.splitlines(),
+            [
+                "**Status:** Ready",
+                "**Priority:** High",
+                "**Size:** M",
+                "**Assigned to:** alice",
+                "**Target date:** <t:1793448000:D>",
+                "",
+                "**Description:**",
+                "Fix the login page",
+                "",
+                "**Link:** <https://github.com/org/repo/issues/1>",
+            ],
+        )
+
+    def test_the_card_carries_no_icon(self) -> None:
+        self.assertTrue(post_card(self.details()).isascii())
+
+    def test_an_empty_task_still_reads(self) -> None:
+        card = post_card(self.details(assignee="", description="", size="", url=""))
+        self.assertIn("Unassigned", card)
+        self.assertIn("No description", card)
+
+    def test_a_long_description_fits_in_one_message(self) -> None:
+        card = post_card(self.details(description="x" * 5000))
+        self.assertLessEqual(len(card), POST_LIMIT)
+        self.assertIn("https://github.com/org/repo/issues/1", card)
+
+    def test_the_card_speaks_the_chosen_language(self) -> None:
+        self.assertIn("Échéance", post_card(self.details(), "fr"))
 
 
 if __name__ == "__main__":
