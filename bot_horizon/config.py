@@ -9,12 +9,16 @@ class Settings:
     github_token: str
     github_project_id: str
     discord_notification_channel_id: int = 0
+    discord_form_channel_id: int = 0
     notification_language: str = "en"
     github_repository_id: str = ""
     github_org_name: str = "play-horizon"
     github_project_number: int = 5
     github_priority_field_name: str = "Priority"
     github_assignee_field_name: str = "Assignees"
+    github_size_field_name: str = "Size"
+    github_start_date_field_name: str = "Start date"
+    github_target_date_field_name: str = "Target date"
     github_poll_interval_seconds: int = 30
 
     @classmethod
@@ -37,12 +41,20 @@ class Settings:
             discord_notification_channel_id=int(
                 os.getenv("DISCORD_NOTIFICATION_CHANNEL_ID") or 0
             ),
+            discord_form_channel_id=int(os.getenv("DISCORD_FORM_CHANNEL_ID") or 0),
             notification_language=os.getenv("NOTIFICATION_LANGUAGE", "en"),
             github_repository_id=os.getenv("GITHUB_REPOSITORY_ID", ""),
             github_org_name=os.getenv("GITHUB_ORG_NAME", "play-horizon"),
             github_project_number=int(os.getenv("GITHUB_PROJECT_NUMBER", "5")),
             github_priority_field_name=os.getenv("GITHUB_PRIORITY_FIELD_NAME", "Priority"),
             github_assignee_field_name=os.getenv("GITHUB_ASSIGNEE_FIELD_NAME", "Assignees"),
+            github_size_field_name=os.getenv("GITHUB_SIZE_FIELD_NAME", "Size"),
+            github_start_date_field_name=os.getenv(
+                "GITHUB_START_DATE_FIELD_NAME", "Start date"
+            ),
+            github_target_date_field_name=os.getenv(
+                "GITHUB_TARGET_DATE_FIELD_NAME", "Target date"
+            ),
             github_poll_interval_seconds=int(
                 os.getenv("GITHUB_POLL_INTERVAL_SECONDS", "30")
             ),

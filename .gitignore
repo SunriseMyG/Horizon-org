@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 .horizon-language
 .venv/
 __pycache__/
